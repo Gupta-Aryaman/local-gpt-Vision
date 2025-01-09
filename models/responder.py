@@ -47,7 +47,7 @@ def generate_response(images, query, session_id, resized_height=280, resized_wid
 
         # If model only supports single image, use only the first image
         if is_single_image_model(model_choice):
-            valid_images = [valid_images[0]]
+            # valid_images = [valid_images[0]]
             logger.info(f"Model {model_choice} only supports single image, using first image only.")
 
         if model_choice == 'qwen':
@@ -275,44 +275,77 @@ def generate_response(images, query, session_id, resized_height=280, resized_wid
                 # Close the opened images to free up resources
                 for img in pil_images:
                     img.close()              
+        
         elif model_choice == 'groq-llama-vision':
             client = load_model('groq-llama-vision')
-
-            content = [{"type": "text", "text": query}]
-
-            # Use only the first image
-            if valid_images:
-                img_path = valid_images[0]
-                if os.path.exists(img_path):
-                    base64_image = encode_image(img_path)
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    })
-                else:
-                    logger.warning(f"Image file not found: {img_path}")
-
-            if len(content) == 1:  # Only text, no images
+           
+            if not valid_images:  # Only text, no images
                 return "No images could be loaded for analysis.", []
+            
+            print(valid_images)
 
             try:
-                chat_completion = client.chat.completions.create(
+                generated_text = ""
+
+                for img in valid_images:
+                    content = [
+                        {
+                            "type": "text", 
+                            "text": "You are a text extraction tool. Extract and return ONLY the exact text visible in the image. Do not describe the image, background or add any commentary. Format the text exactly as it appears, maintaining headings, lists and structure. Do not add any additional formatting or descriptions. For tables, output each row in this exact format: {row_number}. {column1} - {column2}. Do not add any other text or descriptions."
+                        }
+                    ]
+
+                    img_path = img
+                    if os.path.exists(img_path):
+                        base64_image = encode_image(img_path)
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                     })
+                        
+                    chat_completion = client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": content
+                            }
+                        ],
+                        model="llama-3.2-90b-vision-preview",
+                        temperature=0.1,
+                    )
+                    generated_text += chat_completion.choices[0].message.content
+                    generated_text += "\n\n"
+                    print(generated_text)
+                
+
+                from groq import Groq
+                api_key = os.getenv("GROQ_API_KEY")
+                new_client = Groq(api_key=api_key)
+
+                relevancy_check = new_client.chat.completions.create(
                     messages=[
                         {
+                            "role": "system",
+                            "content": "Answer only the query given below from the context I have provided you. If you are unable to find an answer, just say it. Don't add additional information in the answer if provided in the context but not asked."
+                        },
+                        {
                             "role": "user",
-                            "content": content
+                            "content": "Query: " + query + "\n\n Context: \n" + generated_text
                         }
                     ],
-                    model="llava-v1.5-7b-4096-preview",
+                    model="llama-3.3-70b-versatile",
                 )
-                generated_text = chat_completion.choices[0].message.content
+                final_response = relevancy_check.choices[0].message.content
+
                 logger.info("Response generated using Groq Llama Vision model.")
-                return generated_text, valid_images
+                return final_response, valid_images
+            
             except Exception as e:
                 logger.error(f"Error in Groq Llama Vision processing: {str(e)}", exc_info=True)
                 return f"An error occurred while processing the image: {str(e)}", []
+            
         elif model_choice == 'ollama-llama-vision':
             try:
                 message = {
