@@ -31,6 +31,7 @@ def retrieve_documents(RAG, query, session_id, k=3):
         os.makedirs(session_images_folder, exist_ok=True)
         
         for i, result in enumerate(results):
+            print("METADATA", result.metadata)
             if result.base64:
                 image_data = base64.b64decode(result.base64)
                 image = Image.open(BytesIO(image_data))
